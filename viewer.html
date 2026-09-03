@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Polymarket Tennis</title>
+<style>
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 0; background: #f4f5f7; color: #1c1e21; }
+  header { padding: 16px 24px; background: #fff; border-bottom: 1px solid #ddd; display: flex; gap: 16px; align-items: center; }
+  header h1 { font-size: 18px; margin: 0; }
+  header input { flex: 1; max-width: 420px; padding: 8px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 6px; }
+  #status { color: #666; font-size: 13px; }
+  #cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; padding: 24px; }
+  .card { background: #fff; border: 1px solid #e1e3e6; border-radius: 10px; padding: 14px 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 6px; }
+  .meta { font-size: 12px; color: #666; margin-bottom: 10px; }
+  .market { border-top: 1px solid #eee; padding: 8px 0; font-size: 13px; }
+  .market .q { color: #333; margin-bottom: 4px; }
+  .outcome { display: flex; justify-content: space-between; color: #555; }
+  .outcome b { color: #1a73e8; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Polymarket Tennis</h1>
+  <input id="search" type="search" placeholder="Search events...">
+  <span id="status"></span>
+</header>
+<div id="cards"></div>
+
+<script>
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') inQuotes = false;
+      else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); rows.push(row); row = []; field = "";
+    } else field += c;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  const header = rows.shift();
+  return rows.map(r => Object.fromEntries(header.map((h, i) => [h, r[i]])));
+}
+
+function groupByEvent(rows) {
+  const events = new Map();
+  for (const r of rows) {
+    if (!events.has(r.event_id)) {
+      events.set(r.event_id, { title: r.event_title, endDate: r.event_end_date, volume: +r.event_volume, markets: [] });
+    }
+    events.get(r.event_id).markets.push(r);
+  }
+  return [...events.values()].sort((a, b) => a.endDate.localeCompare(b.endDate));
+}
+
+function render(events, query) {
+  const q = query.toLowerCase();
+  const shown = events.filter(e =>
+    e.title.toLowerCase().includes(q) || e.markets.some(m => m.question.toLowerCase().includes(q)));
+
+  document.getElementById("cards").innerHTML = shown.map(e => `
+    <div class="card">
+      <h2>${esc(e.title)}</h2>
+      <div class="meta">Ends ${e.endDate.slice(0, 10)} · Volume $${Math.round(e.volume).toLocaleString()} · ${e.markets.length} markets</div>
+      ${e.markets.map(m => {
+        const names = m.outcomes.split("|"), prices = m.outcome_prices.split("|");
+        return `<div class="market">
+          <div class="q">${esc(m.question)}</div>
+          ${names.map((n, i) => `<div class="outcome"><span>${esc(n)}</span><b>${Math.round(prices[i] * 100)}%</b></div>`).join("")}
+        </div>`;
+      }).join("")}
+    </div>`).join("");
+
+  document.getElementById("status").textContent = `${shown.length} of ${events.length} events`;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+fetch("tennis_events.csv")
+  .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
+  .then(text => {
+    const events = groupByEvent(parseCSV(text));
+    const search = document.getElementById("search");
+    render(events, "");
+    search.addEventListener("input", () => render(events, search.value));
+  })
+  .catch(err => {
+    document.getElementById("status").textContent =
+      `Could not load tennis_events.csv (${err.message}). Run: python3 polymarket_tennis.py && python3 -m http.server 8000`;
+  });
+</script>
+</body>
+</html>
